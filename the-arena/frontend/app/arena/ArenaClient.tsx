@@ -340,6 +340,17 @@ export default function ArenaClient() {
     if (scrollRef.current) scrollRef.current.scrollTop = 0
   }, [turns.length])
 
+  // ── Stop all audio/music when the component unmounts (e.g. back navigation) ─
+  useEffect(() => {
+    return () => {
+      audioQ.stopAll()
+      stopAll()
+      cancelAnimationFrame(typewriterRafRef.current)
+      if (pollingRef.current) clearInterval(pollingRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── Poll helper: given videoId, poll until completed or failed ─────────────
   // Returns a cleanup function to stop polling.
   const startVideoPoll = useCallback((
@@ -840,6 +851,20 @@ export default function ArenaClient() {
   const finalTopic  = topic || customTopic
   const progressPct = Math.min(100, (turnNumber / DEBATE_SEQUENCE.length) * 100)
 
+  // Back navigation: hot-topic flows return home; custom flows return to setup
+  const handleBack = () => {
+    audioQ.stopAll()
+    stopAll()
+    cancelAnimationFrame(typewriterRafRef.current)
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
+    cancelPrefetch()
+    if (autostart) {
+      router.push('/')
+    } else {
+      resetDebate()
+    }
+  }
+
   // StudioStage speaker config — only the current-turn speaker gets video/callbacks.
   const studioSpeakers = [
     {
@@ -1093,7 +1118,7 @@ export default function ArenaClient() {
 
       {/* ── Top bar ────────────────────────────────────────────────────────── */}
       <header className="border-b border-arena-border px-4 py-2.5 flex items-center gap-3 flex-shrink-0 bg-arena-card/50 backdrop-blur-sm">
-        <button onClick={resetDebate} className="text-arena-muted hover:text-white transition-colors flex-shrink-0">
+        <button onClick={handleBack} className="text-arena-muted hover:text-white transition-colors flex-shrink-0">
           <ArrowLeft className="w-5 h-5" />
         </button>
 
@@ -1354,12 +1379,19 @@ export default function ArenaClient() {
               </div>
             )}
 
-            <button onClick={resetDebate}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-white"
-              style={{ background: 'linear-gradient(135deg, #f97316, #7c3aed)' }}>
-              <RefreshCw className="w-4 h-4" />
-              New Debate
-            </button>
+            <div className="flex gap-3">
+              <button onClick={handleBack}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-white border border-arena-border hover:border-white/30 transition-all">
+                <ArrowLeft className="w-4 h-4" />
+                {autostart ? 'Home' : 'Back'}
+              </button>
+              <button onClick={resetDebate}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-white"
+                style={{ background: 'linear-gradient(135deg, #f97316, #7c3aed)' }}>
+                <RefreshCw className="w-4 h-4" />
+                New Debate
+              </button>
+            </div>
           </div>
         </div>
       )}
