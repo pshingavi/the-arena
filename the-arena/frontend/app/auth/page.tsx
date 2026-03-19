@@ -9,7 +9,10 @@ import { SuggestedTopic } from '@/lib/types'
 function AuthForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const from = searchParams.get('from') || '/arena'
+  const from = (() => {
+    const raw = searchParams.get('from') || '/arena'
+    try { return decodeURIComponent(raw) } catch { return raw }
+  })()
 
   const [email, setEmail] = useState('')
   const [ownerCode, setOwnerCode] = useState('')

@@ -106,7 +106,7 @@ export default function ArenaClient() {
   const [guest1, setGuest1]     = useState(searchParams.get('guest1') || '')
   const [guest2, setGuest2]     = useState(searchParams.get('guest2') || '')
   const [topic, setTopic]       = useState(searchParams.get('topic') || '')
-  const [customTopic, setCustomTopic] = useState('')
+  const [customTopic, setCustomTopic] = useState(searchParams.get('customTopic') || '')
   const autostart = searchParams.get('autostart') === '1'
 
   // ── Debate ─────────────────────────────────────────────────────────────────
@@ -511,6 +511,9 @@ export default function ArenaClient() {
   const handleStart = () => {
     if (!canStartDebate) return
 
+    // Still loading auth — don't act yet (avoids false "not logged in" redirects)
+    if (authLoading) return
+
     // Owners: always start immediately using server keys
     if (user?.role === 'owner') {
       doStartDebate()
@@ -523,9 +526,16 @@ export default function ArenaClient() {
       return
     }
 
-    // Custom debate: require login first
+    // Custom debate: require login first.
+    // Encode ALL current selections into the return URL so nothing is lost.
     if (!user) {
-      router.push('/auth?from=/arena')
+      const params = new URLSearchParams()
+      if (guest1)       params.set('guest1', guest1)
+      if (guest2)       params.set('guest2', guest2)
+      if (topic)        params.set('topic', topic)
+      if (customTopic)  params.set('customTopic', customTopic)
+      const returnUrl = '/arena?' + params.toString()
+      router.push('/auth?from=' + encodeURIComponent(returnUrl))
       return
     }
 
