@@ -317,19 +317,23 @@ export default function ArenaClient() {
   useEffect(() => {
     if (!autostart || autoStartFiredRef.current) return
     if (!backendReady || !topics.length || !guest1 || !guest2 || !topic) return
-    autoStartFiredRef.current = true
-    // Only auto-start for hot topic combos (free, no auth needed)
+    if (authLoading) return  // wait for auth to resolve before proceeding
+
     const matchingTopic = topics.find(
       t => t.title === topic &&
         t.suggested_guests?.includes(guest1) &&
         t.suggested_guests?.includes(guest2)
     )
+
+    autoStartFiredRef.current = true  // mark fired regardless so we don't loop
+
     if (matchingTopic) {
-      // Small delay so the UI renders before debate starts
-      setTimeout(() => handleStart(), 400)
+      // Call doStartDebate directly — we've verified it's a free hot topic,
+      // no need to go through handleStart's auth/key checks.
+      setTimeout(() => doStartDebate(), 400)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autostart, backendReady, topics, guest1, guest2, topic])
+  }, [autostart, backendReady, topics, guest1, guest2, topic, authLoading])
 
   // ── Scroll transcript to top when new turns arrive (newest-first layout) ────
   useEffect(() => {
