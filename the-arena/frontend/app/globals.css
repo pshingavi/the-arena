@@ -1,0 +1,226 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --arena-bg: #0a0a0f;
+  --arena-card: #13131a;
+  --arena-border: #1e1e2e;
+  --arena-accent: #f97316;
+  --arena-purple: #7c3aed;
+  --arena-gold: #f59e0b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  background: var(--arena-bg);
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--arena-card);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--arena-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2e2e3e;
+}
+
+/* Typing indicator */
+.typing-dots::after {
+  content: '';
+  animation: typing-dots 1.4s infinite;
+}
+
+@keyframes typing-dots {
+  0%, 20% { content: '.'; }
+  40% { content: '..'; }
+  60%, 100% { content: '...'; }
+}
+
+/* Arena glow effects */
+.arena-glow-orange {
+  box-shadow: 0 0 30px rgba(249, 115, 22, 0.15);
+}
+
+.arena-glow-purple {
+  box-shadow: 0 0 30px rgba(124, 58, 237, 0.15);
+}
+
+/* Debate turn entrance animation */
+@keyframes turnSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.turn-enter {
+  animation: turnSlideIn 0.4s ease-out forwards;
+}
+
+/* Streaming cursor */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.streaming-cursor::after {
+  content: '▋';
+  animation: blink 0.8s infinite;
+  color: var(--arena-accent);
+}
+
+/* Guest card hover */
+.guest-card {
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+.guest-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(249, 115, 22, 0.4);
+}
+.guest-card.selected {
+  border-color: var(--arena-accent);
+  background: rgba(249, 115, 22, 0.08);
+}
+.guest-card.selected-purple {
+  border-color: var(--arena-purple);
+  background: rgba(124, 58, 237, 0.08);
+}
+
+/* Progress bar */
+.debate-progress {
+  height: 3px;
+  background: linear-gradient(90deg, #f97316, #7c3aed);
+  transition: width 0.5s ease;
+}
+
+/* Audio player */
+audio {
+  filter: invert(1) sepia(1) saturate(2) hue-rotate(180deg);
+  height: 32px;
+}
+
+/* ─── Arena Stage Animations ─────────────────────────────────────────────── */
+
+/* Waveform bars — active speaker */
+@keyframes waveBar {
+  0%   { transform: scaleY(0.15); }
+  100% { transform: scaleY(1.0); }
+}
+
+/* Listening / idle breathing — subtle scale pulse */
+@keyframes breathe {
+  0%, 100% { transform: scale(1.0);   opacity: 0.7; }
+  50%       { transform: scale(1.025); opacity: 0.85; }
+}
+
+/* Speaking ring — pulsing outline glow around active avatar */
+@keyframes speakingRing {
+  0%, 100% { opacity: 0.9; transform: scale(1.0); }
+  50%       { opacity: 0.5; transform: scale(1.04); }
+}
+
+.animate-speakingRing {
+  animation: speakingRing 1.2s ease-in-out infinite;
+}
+
+/* Spotlight entrance — avatar slides up when becoming active */
+@keyframes avatarActivate {
+  from { transform: translateY(6px) scale(0.97); opacity: 0.6; }
+  to   { transform: translateY(0)   scale(1.0);  opacity: 1.0; }
+}
+
+.avatar-activate {
+  animation: avatarActivate 0.35s ease-out forwards;
+}
+
+/* Stage intro — arena name fades in from below */
+@keyframes stageReveal {
+  from { opacity: 0; transform: translateY(20px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)    scale(1.0); }
+}
+
+.stage-reveal {
+  animation: stageReveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Vote result bar fill */
+@keyframes barFill {
+  from { width: 0%; }
+}
+
+.vote-bar {
+  animation: barFill 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Music note bounce (music toggle button) */
+@keyframes musicBounce {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-3px); }
+}
+
+.music-active {
+  animation: musicBounce 1.6s ease-in-out infinite;
+}
+
+/* Intro overlay fade-out */
+@keyframes introFade {
+  0%   { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; pointer-events: none; }
+}
+
+.intro-fade {
+  animation: introFade 3.5s ease-in-out forwards;
+}
+
+/* Transcript turn entrance */
+@keyframes transcriptEnter {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.transcript-enter {
+  animation: transcriptEnter 0.3s ease-out forwards;
+}
+
+/* Subtle spotlight vignette on active panel */
+.arena-spotlight {
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.08),
+    0 0 40px rgba(249, 115, 22, 0.25),
+    0 8px 32px rgba(0,0,0,0.6);
+}
+
+.arena-spotlight-purple {
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.08),
+    0 0 40px rgba(124, 58, 237, 0.25),
+    0 8px 32px rgba(0,0,0,0.6);
+}
+
+.arena-spotlight-gold {
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.08),
+    0 0 40px rgba(245, 158, 11, 0.25),
+    0 8px 32px rgba(0,0,0,0.6);
+}
