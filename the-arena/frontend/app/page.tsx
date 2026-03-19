@@ -5,14 +5,17 @@ import { useRouter } from 'next/navigation'
 import { getSuggestedTopics, getGuests } from '@/lib/api'
 import { SuggestedTopic, Guest } from '@/lib/types'
 import { Mic2, Zap, Users, ArrowRight, Pencil } from 'lucide-react'
+import { useBackendReady } from '@/lib/useBackendReady'
 
 export default function HomePage() {
   const router = useRouter()
   const [topics, setTopics] = useState<SuggestedTopic[]>([])
   const [guests, setGuests] = useState<Guest[]>([])
   const [loading, setLoading] = useState(true)
+  const { ready: backendReady } = useBackendReady()
 
   useEffect(() => {
+    if (!backendReady) return
     Promise.all([getSuggestedTopics(), getGuests()])
       .then(([t, g]) => {
         setTopics(t.filter(t => t.available_guests.length >= 2).slice(0, 6))
@@ -20,7 +23,7 @@ export default function HomePage() {
       })
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [])
+  }, [backendReady])
 
   const handleTopicClick = (topic: SuggestedTopic) => {
     const params = new URLSearchParams({
