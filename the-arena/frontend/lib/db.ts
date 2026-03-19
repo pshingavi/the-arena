@@ -1,15 +1,15 @@
 /**
  * User database abstraction.
  *
- * Production:  Vercel KV  (Redis-backed, configured via KV_REST_API_URL env var)
- * Development: In-memory  (resets on server restart — suitable for local testing)
+ * Production:  Upstash Redis  (configured via UPSTASH_REDIS_REST_URL env var)
+ * Development: In-memory      (resets on server restart — suitable for local testing)
  *
  * Schema:
  *   Key:   "user:<email>"
  *   Value: { email: string, role: 'user' | 'owner', createdAt: number }
  *
  * Install for production:
- *   npm install @vercel/kv
+ *   npm install @upstash/redis
  */
 
 export interface UserRecord {
@@ -25,26 +25,28 @@ function userKey(email: string): string {
   return `user:${email.toLowerCase().trim()}`
 }
 
-// ── KV helpers ────────────────────────────────────────────────────────────────
-async function kv() {
-  // Dynamic import so the app doesn't crash if @vercel/kv isn't installed
+// ── Redis helpers ─────────────────────────────────────────────────────────────
+async function getRedis() {
   try {
-    const mod = await import('@vercel/kv')
-    return mod.kv
+    const { Redis } = await import('@upstash/redis')
+    return new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL!,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    })
   } catch {
     return null
   }
 }
 
-const useKV = !!process.env.KV_REST_API_URL
+const useRedis = !!process.env.UPSTASH_REDIS_REST_URL
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export async function getUser(email: string): Promise<UserRecord | null> {
   const key = userKey(email)
-  if (useKV) {
-    const store = await kv()
-    if (store) return store.get<UserRecord>(key)
+  if (useRedis) {
+    const redis = await getRedis()
+    if (redis) return redis.get<UserRecord>(key)
   }
   return _memStore.get(key) ?? null
 }
@@ -56,10 +58,10 @@ export async function createUser(email: string, role: 'user' | 'owner' = 'user')
     role,
     createdAt: Date.now(),
   }
-  if (useKV) {
-    const store = await kv()
-    if (store) {
-      await store.set(key, record)
+  if (useRedis) {
+    const redis = await getRedis()
+    if (redis) {
+      await redis.set(key, record)
       return record
     }
   }
@@ -74,9 +76,9 @@ export async function upsertUser(email: string, role?: 'user' | 'owner'): Promis
     if (role && role !== existing.role) {
       const upgraded = { ...existing, role }
       const key = userKey(email)
-      if (useKV) {
-        const store = await kv()
-        if (store) await store.set(key, upgraded)
+      if (useRedis) {
+        const redis = await getRedis()
+        if (redis) await redis.set(key, upgraded)
       } else {
         _memStore.set(key, upgraded)
       }
