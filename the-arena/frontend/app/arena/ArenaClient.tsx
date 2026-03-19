@@ -107,6 +107,7 @@ export default function ArenaClient() {
   const [guest2, setGuest2]     = useState(searchParams.get('guest2') || '')
   const [topic, setTopic]       = useState(searchParams.get('topic') || '')
   const [customTopic, setCustomTopic] = useState('')
+  const autostart = searchParams.get('autostart') === '1'
 
   // ── Debate ─────────────────────────────────────────────────────────────────
   const [sessionId, setSessionId]   = useState<string | null>(null)
@@ -311,6 +312,25 @@ export default function ArenaClient() {
       .catch(console.error)
   }, [backendReady])
 
+  // ── Auto-start: when ?autostart=1 is in the URL and it's a hot topic, launch immediately
+  const autoStartFiredRef = useRef(false)
+  useEffect(() => {
+    if (!autostart || autoStartFiredRef.current) return
+    if (!backendReady || !topics.length || !guest1 || !guest2 || !topic) return
+    autoStartFiredRef.current = true
+    // Only auto-start for hot topic combos (free, no auth needed)
+    const matchingTopic = topics.find(
+      t => t.title === topic &&
+        t.suggested_guests?.includes(guest1) &&
+        t.suggested_guests?.includes(guest2)
+    )
+    if (matchingTopic) {
+      // Small delay so the UI renders before debate starts
+      setTimeout(() => handleStart(), 400)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autostart, backendReady, topics, guest1, guest2, topic])
+
   // ── Auto-scroll transcript ─────────────────────────────────────────────────
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -487,21 +507,35 @@ export default function ArenaClient() {
     }
   }
 
-  // ── Public handleStart: gate on API keys if needed ─────────────────────────
+  // ── Public handleStart: gate on auth + API keys ────────────────────────────
   const handleStart = () => {
     if (!canStartDebate) return
-    // Owners and hot-topic combos get server keys — start immediately
-    if (user?.role === 'owner' || isHotTopicCombo()) {
+
+    // Owners: always start immediately using server keys
+    if (user?.role === 'owner') {
       doStartDebate()
       return
     }
-    // Custom debate: need user-provided keys
+
+    // Hot-topic combos: free for everyone, no login required
+    if (isHotTopicCombo()) {
+      doStartDebate()
+      return
+    }
+
+    // Custom debate: require login first
+    if (!user) {
+      router.push('/auth?from=/arena')
+      return
+    }
+
+    // Logged-in user with a custom debate: need their own API keys
     if (apiToken) {
-      // Already have a token from a previous registration — use it
       doStartDebate()
       return
     }
-    // Show the API key modal; store doStartDebate as pending action
+
+    // Show the API key modal
     pendingStartRef.current = doStartDebate
     setShowKeyModal(true)
   }
@@ -821,13 +855,9 @@ export default function ArenaClient() {
   ]
 
   // ────────────────────────────────────────────────────────────────────────────
-  // ── Auth guard — redirect if session cookie is invalid ─────────────────────
-  // (Middleware only does a presence check; full HMAC verification is here)
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.replace('/auth?from=/arena')
-    }
-  }, [authLoading, user, router])
+  // ── Auth guard — only redirect if trying a custom debate without login ──────
+  // Hot-topic debates are free and open; no redirect on mount.
+  // Redirection for custom debates is handled inside handleStart below.
 
   // ────────────────────────────────────────────────────────────────────────────
   // BACKEND LOADING SPLASH
@@ -981,14 +1011,24 @@ export default function ArenaClient() {
               </div>
             )}
             {/* Show gating hint */}
-            {canStartDebate && !isHotTopicCombo() && user?.role !== 'owner' && (
+            {canStartDebate && isHotTopicCombo() && (
+              <span className="text-xs text-green-400/70 flex items-center gap-1">
+                ✓ Free — no sign-up needed
+              </span>
+            )}
+            {canStartDebate && !isHotTopicCombo() && user?.role === 'owner' && (
+              <span className="text-xs text-green-400/70 flex items-center gap-1">
+                ✓ Owner — server keys active
+              </span>
+            )}
+            {canStartDebate && !isHotTopicCombo() && user && user.role !== 'owner' && (
               <span className="text-xs text-amber-400/70 flex items-center gap-1">
                 🔑 Your API keys required for custom debates
               </span>
             )}
-            {canStartDebate && (isHotTopicCombo() || user?.role === 'owner') && (
-              <span className="text-xs text-green-400/70 flex items-center gap-1">
-                ✓ Free — no API keys needed
+            {canStartDebate && !isHotTopicCombo() && !user && (
+              <span className="text-xs text-amber-400/70 flex items-center gap-1">
+                → Sign up free to run custom debates
               </span>
             )}
           </div>
