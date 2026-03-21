@@ -6,6 +6,7 @@ import { getSuggestedTopics, getGuests } from '@/lib/api'
 import { SuggestedTopic, Guest } from '@/lib/types'
 import { Mic2, Zap, Users, ArrowRight, Pencil } from 'lucide-react'
 import { useBackendReady } from '@/lib/useBackendReady'
+import { unlockAudioOnGesture } from '@/lib/audioUnlock'
 
 export default function HomePage() {
   const router = useRouter()
@@ -26,6 +27,9 @@ export default function HomePage() {
   }, [backendReady])
 
   const handleTopicClick = (topic: SuggestedTopic) => {
+    // Unlock iOS audio synchronously inside the gesture handler — must happen
+    // before any async work so iOS grants the "playback" audio session.
+    unlockAudioOnGesture()
     const params = new URLSearchParams({
       topic: topic.title,
       guest1: topic.available_guests[0] || '',

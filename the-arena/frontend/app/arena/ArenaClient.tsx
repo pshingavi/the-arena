@@ -11,6 +11,7 @@ import { useAudioQueue } from '@/lib/audioQueue'
 import { StudioStage, type SpeakerState } from './StudioStage'
 import { useAuth } from '@/lib/useAuth'
 import ApiKeyModal from '@/components/ApiKeyModal'
+import { unlockAudioOnGesture } from '@/lib/audioUnlock'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Prefetch types — live at module level so refs are typed correctly
@@ -534,6 +535,9 @@ export default function ArenaClient() {
 
     // Still loading auth — don't act yet (avoids false "not logged in" redirects)
     if (authLoading) return
+
+    // Unlock iOS audio synchronously — must be first thing in any gesture handler
+    unlockAudioOnGesture()
 
     // Owners: always start immediately using server keys
     if (user?.role === 'owner') {

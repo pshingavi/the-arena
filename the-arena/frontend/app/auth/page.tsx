@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Play } from 'lucide-react'
 import { getSuggestedTopics } from '@/lib/api'
 import { SuggestedTopic } from '@/lib/types'
+import { unlockAudioOnGesture } from '@/lib/audioUnlock'
 
 function AuthForm() {
   const router = useRouter()
@@ -100,6 +101,7 @@ function AuthForm() {
       {/* Free watch callout — links to a real debate, not just the setup page */}
       <button
         onClick={() => {
+          unlockAudioOnGesture()
           if (firstHotTopic) {
             const params = new URLSearchParams({
               topic: firstHotTopic.title,

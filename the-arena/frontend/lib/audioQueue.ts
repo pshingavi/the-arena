@@ -18,6 +18,7 @@
 
 import { useRef, useCallback, useEffect } from 'react'
 import { API_URL } from './api'
+import { getUnlockedAudioContext } from './audioUnlock'
 
 export interface AudioQueueOptions {
   onSentenceStart?: (text: string, durationMs: number, priorText: string) => void
@@ -73,30 +74,26 @@ export function useAudioQueue(options: AudioQueueOptions = {}): AudioQueueHandle
   const currentAudioRef  = useRef<HTMLAudioElement | null>(null)       // fallback path
   const cumulativeTextRef = useRef('')
 
-  // ── AudioContext — create once, resume on iOS after suspension ──────────────
+  // ── AudioContext — prefer pre-unlocked singleton, create fallback if needed ──
   const getAudioCtx = useCallback(async (): Promise<AudioContext | null> => {
     if (typeof window === 'undefined') return null
     try {
       if (!audioCtxRef.current) {
-        const Ctx = window.AudioContext || (window as any).webkitAudioContext
-        audioCtxRef.current = new Ctx()
-        const analyser = audioCtxRef.current.createAnalyser()
-        analyser.fftSize = 32
-        analyser.connect(audioCtxRef.current.destination)
-        analyserRef.current = analyser
-
-        // iOS Safari fix: Web Audio API defaults to the earpiece / ambient audio
-        // session and produces no audible output through the speaker. Playing a
-        // tiny silent HTMLAudioElement here forces iOS to switch into the
-        // "media playback" session so all subsequent Web Audio routes to the
-        // speaker/headphones — exactly like a regular audio element would.
-        try {
-          // Minimal silent WAV (44 bytes)
-          const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAVFYAAFRWAAABAAgAZGF0YQAAAAA='
-          const primer = new Audio(silentWav)
-          primer.volume = 0.001
-          await primer.play().catch(() => {})
-        } catch { /* non-critical */ }
+        // Use the context that was created synchronously in the gesture handler
+        // (unlockAudioOnGesture). This is already in iOS "playback" session.
+        const unlocked = getUnlockedAudioContext()
+        if (unlocked) {
+          audioCtxRef.current = unlocked.ctx
+          analyserRef.current  = unlocked.analyser
+        } else {
+          // Fallback: create fresh (works on desktop; may not play on iOS speaker)
+          const Ctx = window.AudioContext || (window as any).webkitAudioContext
+          audioCtxRef.current = new Ctx()
+          const analyser = audioCtxRef.current.createAnalyser()
+          analyser.fftSize = 32
+          analyser.connect(audioCtxRef.current.destination)
+          analyserRef.current = analyser
+        }
       }
       if (audioCtxRef.current.state === 'suspended') {
         await audioCtxRef.current.resume()
