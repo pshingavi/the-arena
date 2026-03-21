@@ -340,9 +340,15 @@ export default function ArenaClient() {
     if (scrollRef.current) scrollRef.current.scrollTop = 0
   }, [turns.length])
 
-  // ── Stop all audio/music when the component unmounts (e.g. back navigation) ─
+  // ── Stop all audio/music on unmount AND on iOS BFCache pagehide ────────────
   useEffect(() => {
+    const handlePageHide = () => {
+      audioQ.stopAll()
+      stopAll()
+    }
+    window.addEventListener('pagehide', handlePageHide)
     return () => {
+      window.removeEventListener('pagehide', handlePageHide)
       audioQ.stopAll()
       stopAll()
       cancelAnimationFrame(typewriterRafRef.current)

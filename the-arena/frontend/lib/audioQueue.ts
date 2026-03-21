@@ -5,30 +5,21 @@
  *
  * Plays synthesised speech sentence-by-sentence in perfect sync with text.
  *
- * Callbacks:
- *   onSentenceStart(text, durationMs) — fires when a sentence's audio begins
- *     playing. Use this to drive the typewriter: reveal `text` over `durationMs`.
- *   onQueueEmpty() — fires when every sentence has finished playing AND all
- *     in-flight TTS fetches are done. Use this to advance to the next turn.
+ * iOS Safari note: HTMLAudioElement.play() is blocked after async operations
+ * (e.g. a fetch) unless directly triggered by a user gesture. We pre-decode
+ * each clip into an AudioBuffer via Web Audio API (which IS reusable once the
+ * AudioContext is unlocked by the first gesture) and play through a
+ * BufferSource. HTMLAudioElement is kept as desktop fallback only.
  *
- * The hook also exposes:
- *   analyserRef  — Web Audio AnalyserNode for waveform visualisation
- *   isPlayingRef — true while audio is playing
- *   synthInFlightRef — number of pending TTS fetch requests
+ * Callbacks:
+ *   onSentenceStart(text, durationMs, priorText) — fires when sentence starts
+ *   onQueueEmpty()  — fires when every sentence has finished playing
  */
 
 import { useRef, useCallback, useEffect } from 'react'
 import { API_URL } from './api'
 
 export interface AudioQueueOptions {
-  /**
-   * Fires when a sentence's audio begins playing.
-   * @param text       The sentence text being spoken
-   * @param durationMs The exact duration of this audio clip (ms)
-   * @param priorText  Everything that was spoken before this sentence —
-   *                   use this to snap the display to the correct position
-   *                   before starting the per-sentence typewriter.
-   */
   onSentenceStart?: (text: string, durationMs: number, priorText: string) => void
   onQueueEmpty?: () => void
 }
@@ -43,43 +34,47 @@ export interface AudioQueueHandle {
   synthInFlightRef: React.MutableRefObject<number>
 }
 
+// Stored queue item — carries a decoded AudioBuffer (preferred) or blob URL fallback
+interface QueueItem {
+  text: string
+  audioBuffer?: AudioBuffer   // decoded via Web Audio — works on iOS
+  blobUrl?: string            // fallback for browsers where decoding fails
+}
+
 // ─── Sentence boundary detection ─────────────────────────────────────────────
 function extractSentences(text: string): { sentences: string[]; remaining: string } {
   const pattern = /[^.!?…\n]*[.!?…]+(?:\s+|$)/g
   const sentences: string[] = []
   let lastIndex = 0
   let match: RegExpExecArray | null
-
   while ((match = pattern.exec(text)) !== null) {
     const s = match[0].trim()
     if (s.length >= 16) sentences.push(s)
     lastIndex = pattern.lastIndex
   }
-
   return { sentences, remaining: text.slice(lastIndex) }
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 export function useAudioQueue(options: AudioQueueOptions = {}): AudioQueueHandle {
-  // Keep callbacks in a ref so they're always fresh without causing re-renders
   const callbacksRef = useRef(options)
   useEffect(() => { callbacksRef.current = options })
 
-  const queueRef       = useRef<Array<{ url: string; text: string }>>([])
-  const pendingTextRef = useRef('')
-  const isPlayingRef   = useRef(false)
+  const queueRef          = useRef<QueueItem[]>([])
+  const pendingTextRef    = useRef('')
+  const isPlayingRef      = useRef(false)
   const synthInFlightRef  = useRef(0)
-  const currentAudioRef   = useRef<HTMLAudioElement | null>(null)
-  // Tracks the concatenation of every sentence that has FINISHED playing.
-  // Passed to onSentenceStart as `priorText` so the caller can snap the
-  // typewriter display to the correct position before revealing the next sentence.
+  const stoppedRef        = useRef(false)       // set by stopAll to abort in-flight plays
+
+  // Web Audio
+  const audioCtxRef    = useRef<AudioContext | null>(null)
+  const analyserRef    = useRef<AnalyserNode | null>(null)
+  const currentSourceRef = useRef<AudioBufferSourceNode | null>(null)  // Web Audio path
+  const currentAudioRef  = useRef<HTMLAudioElement | null>(null)       // fallback path
   const cumulativeTextRef = useRef('')
 
-  // Web Audio for waveform visualisation
-  const audioCtxRef  = useRef<AudioContext | null>(null)
-  const analyserRef  = useRef<AnalyserNode | null>(null)
-
-  const getAudioCtx = useCallback((): AudioContext | null => {
+  // ── AudioContext — create once, resume on iOS after suspension ──────────────
+  const getAudioCtx = useCallback(async (): Promise<AudioContext | null> => {
     if (typeof window === 'undefined') return null
     try {
       if (!audioCtxRef.current) {
@@ -90,24 +85,31 @@ export function useAudioQueue(options: AudioQueueOptions = {}): AudioQueueHandle
         analyser.connect(audioCtxRef.current.destination)
         analyserRef.current = analyser
       }
-      if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume()
+      if (audioCtxRef.current.state === 'suspended') {
+        await audioCtxRef.current.resume()
+      }
       return audioCtxRef.current
     } catch {
       return null
     }
   }, [])
 
-  // Check whether the queue is truly exhausted (no items + no pending fetches)
+  // ── Queue exhaustion check ──────────────────────────────────────────────────
   const checkEmpty = useCallback(() => {
-    if (queueRef.current.length === 0 && synthInFlightRef.current === 0 && !isPlayingRef.current) {
+    if (!stoppedRef.current &&
+        queueRef.current.length === 0 &&
+        synthInFlightRef.current === 0 &&
+        !isPlayingRef.current) {
       callbacksRef.current.onQueueEmpty?.()
     }
   }, [])
 
-  const playNext = useCallback(() => {
+  // ── Play next item from queue ───────────────────────────────────────────────
+  const playNext = useCallback(async () => {
+    if (stoppedRef.current) return
+
     if (queueRef.current.length === 0) {
       isPlayingRef.current = false
-      // Poll briefly in case synthesis is still in flight
       if (synthInFlightRef.current > 0) {
         setTimeout(playNext, 120)
       } else {
@@ -117,56 +119,70 @@ export function useAudioQueue(options: AudioQueueOptions = {}): AudioQueueHandle
     }
 
     isPlayingRef.current = true
-    const { url, text } = queueRef.current.shift()!
-    const audio = new Audio(url)
-    currentAudioRef.current = audio
-
-    // Capture priorText at the moment this sentence STARTS — it's everything
-    // spoken before this sentence, which the caller uses to snap the display.
+    const item = queueRef.current.shift()!
+    const { text } = item
     const priorText = cumulativeTextRef.current
 
-    // Connect to analyser for waveform
-    const ctx = getAudioCtx()
-    if (ctx && analyserRef.current) {
+    const advance = () => {
+      if (stoppedRef.current) return
+      cumulativeTextRef.current = priorText + text
+      currentSourceRef.current = null
+      currentAudioRef.current  = null
+      isPlayingRef.current = false
+      playNext()
+    }
+
+    // ── Web Audio path (preferred — works on iOS after context unlock) ────────
+    if (item.audioBuffer) {
       try {
-        const src = ctx.createMediaElementSource(audio)
-        src.connect(analyserRef.current)
-      } catch { /* Safari: can only attach once per element */ }
+        const ctx = await getAudioCtx()
+        if (!ctx || stoppedRef.current) return
+        const source = ctx.createBufferSource()
+        source.buffer = item.audioBuffer
+        source.connect(analyserRef.current ?? ctx.destination)
+        currentSourceRef.current = source
+
+        const durationMs = item.audioBuffer.duration * 1000
+        callbacksRef.current.onSentenceStart?.(text, durationMs, priorText)
+
+        source.onended = advance
+        source.start(0)
+        return
+      } catch {
+        advance()
+        return
+      }
     }
 
-    // Fire onSentenceStart with the actual audio duration once metadata is loaded.
-    // Pass priorText so the caller can snap the typewriter to the correct position
-    // before revealing this sentence — prevents the display cursor from drifting
-    // when sentences play faster than the previous typewriter animation completes.
-    audio.onloadedmetadata = () => {
-      const durationMs = Math.max((audio.duration || 1) * 1000, 200)
-      callbacksRef.current.onSentenceStart?.(text, durationMs, priorText)
+    // ── HTMLAudioElement fallback (desktop browsers) ──────────────────────────
+    if (item.blobUrl) {
+      const audio = new Audio(item.blobUrl)
+      currentAudioRef.current = audio
+
+      const ctx = await getAudioCtx()
+      if (ctx && analyserRef.current && !stoppedRef.current) {
+        try {
+          const src = ctx.createMediaElementSource(audio)
+          src.connect(analyserRef.current)
+        } catch { /* Safari: can only attach once per element */ }
+      }
+
+      audio.onloadedmetadata = () => {
+        if (stoppedRef.current) return
+        const durationMs = Math.max((audio.duration || 1) * 1000, 200)
+        callbacksRef.current.onSentenceStart?.(text, durationMs, priorText)
+      }
+      audio.onended = () => { URL.revokeObjectURL(item.blobUrl!); advance() }
+      audio.onerror = () => { URL.revokeObjectURL(item.blobUrl!); advance() }
+      audio.play().catch(() => { URL.revokeObjectURL(item.blobUrl!); advance() })
+      return
     }
 
-    audio.onended = () => {
-      // Commit this sentence to the cumulative log so the NEXT sentence's
-      // priorText will include it.
-      cumulativeTextRef.current = priorText + text
-      URL.revokeObjectURL(url)
-      currentAudioRef.current = null
-      playNext()
-    }
-    audio.onerror = () => {
-      // Even on error, advance cumulative so subsequent sentences position correctly.
-      cumulativeTextRef.current = priorText + text
-      URL.revokeObjectURL(url)
-      currentAudioRef.current = null
-      playNext()
-    }
+    // Nothing playable — skip
+    advance()
+  }, [getAudioCtx])
 
-    audio.play().catch(() => {
-      cumulativeTextRef.current = priorText + text
-      URL.revokeObjectURL(url)
-      currentAudioRef.current = null
-      playNext()
-    })
-  }, [getAudioCtx, checkEmpty])
-
+  // ── Enqueue a sentence: fetch TTS, decode into AudioBuffer ─────────────────
   const enqueue = useCallback(async (text: string, speaker: string): Promise<void> => {
     const trimmed = text.trim()
     if (!trimmed || trimmed.length < 4) return
@@ -178,25 +194,42 @@ export function useAudioQueue(options: AudioQueueOptions = {}): AudioQueueHandle
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: trimmed, speaker }),
       })
-      if (!res.ok) return
+      if (!res.ok || stoppedRef.current) return
 
-      const blob = await res.blob()
-      if (blob.size < 100) return
+      const arrayBuffer = await res.arrayBuffer()
+      if (arrayBuffer.byteLength < 100 || stoppedRef.current) return
 
-      const url = URL.createObjectURL(blob)
-      queueRef.current.push({ url, text: trimmed })
+      // Try to decode via Web Audio (iOS-safe path)
+      const ctx = await getAudioCtx()
+      if (ctx && !stoppedRef.current) {
+        try {
+          const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+          if (!stoppedRef.current) {
+            queueRef.current.push({ text: trimmed, audioBuffer })
+            if (!isPlayingRef.current) playNext()
+            return
+          }
+        } catch {
+          // decoding failed — fall through to blob URL
+        }
+      }
 
-      if (!isPlayingRef.current) playNext()
+      // Fallback: blob URL + HTMLAudioElement
+      if (!stoppedRef.current) {
+        const blob = new Blob([arrayBuffer])
+        const blobUrl = URL.createObjectURL(blob)
+        queueRef.current.push({ text: trimmed, blobUrl })
+        if (!isPlayingRef.current) playNext()
+      }
     } catch {
       // ElevenLabs not configured or network error — silent fallback
     } finally {
       synthInFlightRef.current -= 1
-      // If we decremented to 0 and nothing is playing, check if queue is done
       if (synthInFlightRef.current === 0 && !isPlayingRef.current && queueRef.current.length === 0) {
-        callbacksRef.current.onQueueEmpty?.()
+        if (!stoppedRef.current) callbacksRef.current.onQueueEmpty?.()
       }
     }
-  }, [playNext])
+  }, [getAudioCtx, playNext])
 
   const addChunk = useCallback((chunk: string, speaker: string) => {
     pendingTextRef.current += chunk
@@ -209,29 +242,44 @@ export function useAudioQueue(options: AudioQueueOptions = {}): AudioQueueHandle
     const leftover = pendingTextRef.current.trim()
     pendingTextRef.current = ''
     if (leftover.length >= 4) enqueue(leftover, speaker)
-    // If ElevenLabs not configured nothing will be enqueued, so fire empty immediately
+    // If ElevenLabs not configured, nothing enqueued — fire empty after short delay
     setTimeout(() => {
       if (queueRef.current.length === 0 && synthInFlightRef.current === 0 && !isPlayingRef.current) {
-        callbacksRef.current.onQueueEmpty?.()
+        if (!stoppedRef.current) callbacksRef.current.onQueueEmpty?.()
       }
     }, 200)
   }, [enqueue])
 
   const stopAll = useCallback(() => {
+    stoppedRef.current = true
+
+    // Stop Web Audio BufferSource
+    try { currentSourceRef.current?.stop() } catch {}
+    currentSourceRef.current = null
+
+    // Stop HTMLAudioElement fallback
     if (currentAudioRef.current) {
       currentAudioRef.current.pause()
       currentAudioRef.current.src = ''
       currentAudioRef.current = null
     }
-    queueRef.current.forEach(({ url }) => { try { URL.revokeObjectURL(url) } catch {} })
+
+    // Clear queue, revoke any blob URLs
+    queueRef.current.forEach(item => {
+      if (item.blobUrl) try { URL.revokeObjectURL(item.blobUrl) } catch {}
+    })
     queueRef.current = []
-    pendingTextRef.current = ''
+    pendingTextRef.current    = ''
     cumulativeTextRef.current = ''
-    isPlayingRef.current = false
-    // Don't fire onQueueEmpty on stopAll — caller is explicitly stopping
+    isPlayingRef.current      = false
+
+    // Re-arm for future use (e.g. after resetDebate)
+    setTimeout(() => { stoppedRef.current = false }, 50)
   }, [])
 
+  // Cleanup on unmount
   useEffect(() => () => {
+    stoppedRef.current = true
     stopAll()
     audioCtxRef.current?.close()
     audioCtxRef.current = null
