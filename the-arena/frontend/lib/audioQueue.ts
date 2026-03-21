@@ -84,6 +84,19 @@ export function useAudioQueue(options: AudioQueueOptions = {}): AudioQueueHandle
         analyser.fftSize = 32
         analyser.connect(audioCtxRef.current.destination)
         analyserRef.current = analyser
+
+        // iOS Safari fix: Web Audio API defaults to the earpiece / ambient audio
+        // session and produces no audible output through the speaker. Playing a
+        // tiny silent HTMLAudioElement here forces iOS to switch into the
+        // "media playback" session so all subsequent Web Audio routes to the
+        // speaker/headphones — exactly like a regular audio element would.
+        try {
+          // Minimal silent WAV (44 bytes)
+          const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAVFYAAFRWAAABAAgAZGF0YQAAAAA='
+          const primer = new Audio(silentWav)
+          primer.volume = 0.001
+          await primer.play().catch(() => {})
+        } catch { /* non-critical */ }
       }
       if (audioCtxRef.current.state === 'suspended') {
         await audioCtxRef.current.resume()
@@ -146,6 +159,9 @@ export function useAudioQueue(options: AudioQueueOptions = {}): AudioQueueHandle
         callbacksRef.current.onSentenceStart?.(text, durationMs, priorText)
 
         source.onended = advance
+
+        // Ensure context is running (iOS may re-suspend between sentences)
+        if (ctx.state === 'suspended') await ctx.resume()
         source.start(0)
         return
       } catch {
